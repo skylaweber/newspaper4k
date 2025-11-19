@@ -18,6 +18,11 @@ from newspaper.article import Article
 from newspaper.parsers import fromstring, get_tags
 from newspaper.source import Source
 
+
+# Define Custom Exception
+class GNewsNotFunctionalError(RuntimeError):
+    pass
+
 try:
     import gnews
 except ImportError as e:
@@ -85,6 +90,8 @@ class GoogleNewsSource(Source):
         self.max_results = max_results
         self.exclude_websites = exclude_websites
         self.gnews_results: list[Any] = []
+        self.gnews_functional = False # Added
+        self.gnews_init_error = None # Added
         proxy = None
         if "proxies" in self.config.requests_params:
             proxy = self.config.requests_params["proxies"].get("http") or self.config.requests_params["proxies"].get(
@@ -102,6 +109,17 @@ class GoogleNewsSource(Source):
             exclude_websites=self.exclude_websites,
             proxy=proxy,
         )
+        try:
+            # Health check: Attempt a very limited, low-impact query.
+            self.gnews.get_news('', max_results=1)
+            self.gnews_functional = True
+        except Exception as e:
+            self.gnews_init_error = e
+            logger.warning(
+                "gnews initialized but appears non-functional. "
+                "GoogleNewsSource may not work as expected. Error: %s", e,
+                exc_info=True
+            )
 
     def build(
         self,
@@ -169,6 +187,16 @@ class GoogleNewsSource(Source):
             site (str, optional): The site to filter news articles by.
                 Defaults to None.
         """
+        if not self.gnews_functional:
+            logger.warning(
+                "gnews is not functional (initialization failed or health check failed). "
+                "Cannot download articles from Google News. Error: %s",
+                self.gnews_init_error
+            )
+            self.gnews_results = []
+            self.is_downloaded = False # Ensure it reflects that download didn't occur
+            return
+
         self.gnews_results = []
         if top_news:
             self.gnews_results += self.gnews.get_top_news()
@@ -212,6 +240,28 @@ class GoogleNewsSource(Source):
             been populated with
         the Google News results by the :any:`download` method.
         """
+        if not self.gnews_functional:
+            logger.warning(
+                "gnews is not functional. Cannot parse articles from Google News."
+                " Ensure gnews_results is empty if download didn't run."
+            )
+            self.articles = []
+            self.is_parsed = False
+            return
+
+        if not self.is_downloaded: # Check if download was attempted
+            logger.warning(
+                "You must download the news feed before parsing it. Call download() first."
+            )
+            self.articles = []
+            self.is_parsed = False
+            return
+
+        if not self.gnews_results: # If download did run but found nothing
+            logger.info("No gnews results to parse.")
+            self.articles = []
+            self.is_parsed = True # Considered parsed, as there's nothing to do.
+            return
 
         def prepare_gnews_url(url):
             # Google keeps making life difficult for us. They encode the URL

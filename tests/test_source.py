@@ -274,11 +274,14 @@ class TestSource:
         assert len(source.articles) > 250
 
     def test_gnews(self, gnews_source):
+        gnews_module = pytest.importorskip("gnews", reason="gnews library not installed, skipping this test")
         source = GoogleNewsSource(
             country="US",
             period="7d",
             max_results=10,
         )
+        if not source.gnews_functional:
+            pytest.skip(f"gnews is installed but not functional. Init error: {source.gnews_init_error}")
         source.build(top_news=True)
         assert len(source.articles) == 10
 
