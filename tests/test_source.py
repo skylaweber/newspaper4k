@@ -1,15 +1,16 @@
 import io
 import os
-import pytest
 import pickle
+
+import pytest
+
 import newspaper
-from newspaper import Source
+import tests.conftest as conftest
+from newspaper import Source, utils
 from newspaper.article import ArticleDownloadState
+from newspaper.google_news import GoogleNewsSource
 from newspaper.settings import MEMO_DIR
 from newspaper.utils import domain_to_filename
-from newspaper.google_news import GoogleNewsSource
-import tests.conftest as conftest
-from newspaper import utils
 
 
 @pytest.fixture
@@ -100,10 +101,10 @@ def cnn_source():
 @pytest.fixture
 def feed_sources():
     return [
-        {"url": "https://www.npr.org/", "feeds": 15},
-        {"url": "https://techcrunch.com", "feeds": 15},
-        # {"url": "https://vox.com", "feeds": 6},
-        {"url": "https://www.theverge.com/", "feeds": 14},
+        {"url": "https://www.thesun.co.uk/", "feeds": 20},
+        {"url": "https://www.aljazeera.com/", "feeds": 1},
+        {"url": "https://www.theverge.com/", "feeds": 1},
+        {"url": "https://techcrunch.com", "feeds": 12},
     ]
 
 
@@ -219,13 +220,13 @@ class TestSource:
         # Test cache enabled
         @utils.cache_disk(seconds=86400)
         def stub_func(_, domain):
-            raise Exception("Should not be called")
+            raise NotImplementedError("Should not be called")
 
         stub_func(None, source.domain)
 
         utils.cache_disk.enabled = False
         # test cache disabled
-        with pytest.raises(Exception):
+        with pytest.raises(NotImplementedError):
             stub_func(None, source.domain)
 
     # Skip if GITHUB_ACTIONS. It can fail because of internet access
@@ -260,7 +261,7 @@ class TestSource:
         articles = source.download_articles()
 
         assert len(articles) == 30
-        assert all([a.download_state == ArticleDownloadState.SUCCESS for a in articles])
+        assert all([a.download_state == ArticleDownloadState.SUCCESS for a in articles])  # noqa: C419
 
     def test_only_homepage(self, cnn_source):
         source = newspaper.build(
@@ -273,11 +274,14 @@ class TestSource:
         assert len(source.articles) > 250
 
     def test_gnews(self, gnews_source):
+        gnews_module = pytest.importorskip("gnews", reason="gnews library not installed, skipping this test")
         source = GoogleNewsSource(
             country="US",
             period="7d",
             max_results=10,
         )
+        if not source.gnews_functional:
+            pytest.skip(f"gnews is installed but not functional. Init error: {source.gnews_init_error}")
         source.build(top_news=True)
         assert len(source.articles) == 10
 
@@ -294,9 +298,7 @@ class TestSource:
         assert len(source.articles) == 10
 
         source.download_articles()
-        assert all(
-            [a.download_state == ArticleDownloadState.SUCCESS for a in source.articles]
-        )
+        assert all([a.download_state == ArticleDownloadState.SUCCESS for a in source.articles])  # noqa: C419
 
     @pytest.mark.skipif("GITHUB_ACTIONS" in os.environ, reason="Skip if GITHUB_ACTIONS")
     def test_source_in_same_path(self):
@@ -306,9 +308,4 @@ class TestSource:
             memorize_articles=False,
         )
 
-        assert all(
-            [
-                a.url.startswith("https://www.dailymail.co.uk/health/")
-                for a in source.articles
-            ]
-        )
+        assert all([a.url.startswith("https://www.dailymail.co.uk/health/") for a in source.articles])  # noqa: C419
